@@ -41,7 +41,7 @@ def main(args):
     try:
         hest_table = Hest(args.acpi_location + "/HEST")
         hest_table.print_data()
-    except:
+    except FileNotFoundError:
         print(f"ERROR: No HEST file in {args.acpi_location}")
     # Read BERT data file
     generic_error_status_block = GenericErrorStatusBlock(

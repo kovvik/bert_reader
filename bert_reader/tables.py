@@ -24,8 +24,8 @@ class GenericTable:
         """
         Converts binary data chunk to integer.
         """
-        return struct.unpack(
-            "i", binary_data[byte_offset : byte_offset + length]
+        return struct.unpack_from(
+            "I", binary_data[byte_offset : byte_offset + length]
         )[0]
 
     def binary_to_byte(self, binary_data, byte_offset, length=1):
@@ -161,35 +161,44 @@ class Hest(GenericTable):
             "creator_id": self.binary_to_string(data, 28, 4),
             "creator_revision": self.binary_to_int(data, 32),
             "error_source_count": self.binary_to_int(data, 36),
-            "error_source_structure": data[40:],
             "hex": self.binary_to_hex(data, 0, len(data)),
         }
+        self.error_entries = self.parse_error_entries(data[40:])
 
+    def parse_error_entries(self, data):
+        """
+        Parse the error entries in data. Return a list of error entries.
 
-class GenericHardwareErrorSourceStructure(GenericTable):
-    """
-    Generic Hardware Error Source Structure class
+        Arguments:
+            data:   raw data containing the error entries
+        """
+        error_entries = []
+        entry_start = 0
+        while entry_start < len(data):
+            entry_type = HEST_TYPES.get(
+                self.binary_to_int(
+                    data[entry_start : entry_start + 2] + b"\00\00",
+                    0,
+                    length=4,
+                )
+            )
+            if not isinstance(entry_type, str):
+                entry = entry_type(data[entry_start:])
+                error_entries.append(entry)
+                entry_start += entry.data["length"]
+            else:
+                break
+        return error_entries
 
-    Section 18.3.2.7 in ACPI Specification.
-    """
-
-    def __init__(self, filename):
-        self.filename = filename
-        data = self.read_table(self.filename)
-        self.data = {
-            "type": self.binary_to_int(data, 0, length=2),
-            "source_id": self.binary_to_int(data, 2, length=2),
-            "related_source_id": self.binary_to_int(data, 4),
-            "flags": self.binary_to_byte(data, 6),
-            "enabled": self.binary_to_byte(data, 7),
-            "number_of_records_to_preallocate": self.binary_to_int(data, 8),
-            "max_sections_per_record": self.binary_to_int(data, 12),
-            "max_raw_data_length": self.binary_to_int(data, 16),
-            "error_status_address": self.binary_to_hex(data, 20, 12),
-            "notification_structure": data[28:60],
-            "error_status_block_length": self.binary_to_hex(data, 60, 4),
-            "hex": self.binary_to_hex(data, 0, len(data)),
-        }
+    def print_data(self):
+        super().print_data()
+        print("-------------")
+        print("HEST entries:")
+        print()
+        for entry in self.error_entries:
+            entry.print_data()
+        print("HEST entries end")
+        print("----------------")
 
 
 class GenericErrorStatusBlock(GenericData):
@@ -298,6 +307,306 @@ class FirmwareErrorRecordReference(CommonPlatformErrorRecord):
             "hex": self.binary_to_hex(data, 32, len(data) - 32),
         }
 
+
+class HardwareErrorSourceEntry(GenericData):
+    """
+    Common ACPI Hardware Error Source Entry.
+
+    18.3.2 in ACPI Specification.
+    """
+
+    def parse_notification(self, notification_data):
+        return {
+            "type": self.binary_to_int(
+                notification_data[0:1] + b"\00\00\00", 0, length=4
+            ),
+            "length": self.binary_to_hex(notification_data, 1, 1),
+            "configuration_write_enable": self.binary_to_hex(
+                notification_data, 2, 1
+            ),
+            "poll_interval": self.binary_to_int(notification_data, 4),
+            "switch_to_polling_threshold_value": self.binary_to_int(
+                notification_data, 12
+            ),
+            "switch_to_polling_threshold_window": self.binary_to_int(
+                notification_data, 16
+            ),
+            "error_threshold_value": self.binary_to_int(notification_data, 20),
+            "error_threshold_window": self.binary_to_int(
+                notification_data, 24
+            ),
+        }
+
+    def print_data(self):
+        super().print_data()
+        if "notification_structure" in self.data:
+            print("Parsed notification data:")
+            for key, data in self.parse_notification(
+                self.data["notification_structure"]
+            ).items():
+                print(key.replace("_", " ").capitalize() + ":", data)
+            print()
+
+
+class IA32ArchitectureMachineCheckException(HardwareErrorSourceEntry):
+    """
+    IA-32 Architecture Machine Check Exception
+
+    18.3.2.1 in ACPI Specification.
+    """
+
+    def __init__(self, data):
+        self.name = "IA-32 Architecture Machine Check Exception"
+        self.data = {
+            "type": self.binary_to_int(data[0:2] + b"\00\00", 0, length=4),
+            "source_id": self.binary_to_int(
+                data[2:4] + b"\00\00", 0, length=4
+            ),
+            "flags": self.binary_to_byte(data, 6),
+            "enabled": self.binary_to_byte(data, 7),
+            "number_of_records_to_preallocate": self.binary_to_int(data, 12),
+            "max_sections_per_record": self.binary_to_int(data, 12),
+            "global_capability_init_data": self.binary_to_int(
+                data, 16, length=8
+            ),
+            "global_control_init_data": self.binary_to_int(data, 24, length=8),
+            "number_of_hardware_banks": self.binary_to_byte(data, 32),
+        }
+        self.data["length"] = 40 + self.data["number_of_hardware_banks"] * 28
+        self.records = self.get_records(data[28 : self.data["length"]])
+
+    def get_records(self, data):
+        records = []
+        for start in range(self.data["number_of_hardware_banks"]):
+            record = IA32ArchitectureMachineCheckBankStructure(
+                data[start * 28 : (start * 28) + 28]
+            )
+            records.append(record)
+        return records
+
+    def print_data(self):
+        super().print_data()
+        for record in self.records:
+            record.print_data()
+
+
+class IA32ArchitectureMachineCheckBankStructure(HardwareErrorSourceEntry):
+    """
+    IA-32 Architecture Machine Check Bank Structure
+
+    18.3.2.1.1 in ACPI Specification.
+    """
+
+    def __init__(self, data):
+        self.name = "IA-32 Architecture Machine Check Bank Structure"
+        self.data = {
+            "bank_number": self.binary_to_byte(data, 0),
+            "clear_status_on_initialization": self.binary_to_byte(data, 1),
+            "status_data_format": self.binary_to_byte(data, 2),
+            "control_register_msr_address": self.binary_to_hex(data, 4, 4),
+            "control_init_data": self.binary_to_hex(data, 8, 8),
+            "status_register_msr_address": self.binary_to_hex(data, 16, 4),
+            "address_register_msr_address": self.binary_to_hex(data, 20, 4),
+            "misc_register_msr_address": self.binary_to_hex(data, 24, 4),
+        }
+
+
+class IA32ArchitectureCorrectedMachineCheck(HardwareErrorSourceEntry):
+    """
+    IA-32 Architecture Corrected Machine Check
+
+    18.3.2.2 in ACPI Specification.
+    """
+
+    def __init__(self, data):
+        self.name = "IA-32 Architecture Corrected Machine Check"
+        self.data = {
+            "type": self.binary_to_int(data[0:2] + b"\00\00", 0, length=4),
+            "source_id": self.binary_to_int(
+                data[2:4] + b"\00\00", 0, length=4
+            ),
+            "flags": self.binary_to_byte(data, 6),
+            "enabled": self.binary_to_byte(data, 7),
+            "number_of_records_to_preallocate": self.binary_to_int(data, 12),
+            "max_sections_per_record": self.binary_to_int(data, 12),
+            "notification_structure": data[16:44],
+            "number_of_hardware_banks": self.binary_to_byte(data, 44),
+        }
+        self.data["length"] = 48 + self.data["number_of_hardware_banks"] * 28
+
+
+class AERRootPort(HardwareErrorSourceEntry):
+    """
+    PCI Express Root Port AER Structure
+
+    Section 18.3.2.4 in ACPI Specification.
+    """
+
+    def __init__(self, data):
+        self.name = "PCI Express Root Port AER Structure"
+        self.data = {
+            "type": self.binary_to_int(data[0:2] + b"\00\00", 0, length=4),
+            "source_id": self.binary_to_int(
+                data[2:4] + b"\00\00", 0, length=4
+            ),
+            "flags": self.binary_to_byte(data, 6),
+            "enabled": self.binary_to_byte(data, 7),
+            "number_of_records_to_preallocate": self.binary_to_int(data, 8),
+            "max_sections_per_record": self.binary_to_int(data, 12),
+            "bus": self.binary_to_int(data, 16),
+            "device": self.binary_to_hex(data, 20, 2),
+            "function": self.binary_to_hex(data, 22, 2),
+            "uncorrectable_error_mask": self.binary_to_hex(data, 28, 4),
+            "uncorrectable_error_severity": self.binary_to_hex(data, 32, 4),
+            "correctable_error_mask": self.binary_to_hex(data, 36, 4),
+            "advanced_error_capabilities_and_contorl": self.binary_to_hex(
+                data, 40, 4
+            ),
+            "root_error_command": self.binary_to_hex(data, 44, 4),
+            "length": 48,
+        }
+
+
+class AEREndpoint(HardwareErrorSourceEntry):
+    """
+    PCI Express Device AER Structure
+
+    Section 18.3.2.5 in ACPI Specification.
+    """
+
+    def __init__(self, data):
+        self.name = "PCI Express Device AER Structure"
+        self.data = {
+            "type": self.binary_to_int(data[0:2] + b"\00\00", 0, length=4),
+            "source_id": self.binary_to_int(
+                data[2:4] + b"\00\00", 0, length=4
+            ),
+            "flags": self.binary_to_byte(data, 6),
+            "enabled": self.binary_to_byte(data, 7),
+            "number_of_records_to_preallocate": self.binary_to_int(data, 8),
+            "max_sections_per_record": self.binary_to_int(data, 12),
+            "bus": self.binary_to_int(data, 16),
+            "device": self.binary_to_hex(data, 20, 2),
+            "function": self.binary_to_hex(data, 22, 2),
+            "device_control": self.binary_to_hex(data, 24, 2),
+            "uncorrectable_error_mask": self.binary_to_hex(data, 28, 4),
+            "uncorrectable_error_severity": self.binary_to_hex(data, 32, 4),
+            "correctable_error_mask": self.binary_to_hex(data, 36, 4),
+            "advanced_error_capabilities_and_contorl": self.binary_to_hex(
+                data, 40, 4
+            ),
+            "length": 44,
+        }
+
+
+class AERBridge(HardwareErrorSourceEntry):
+    """
+    PCI Express/PCI-X Bridge AER Structure
+
+    Section 18.3.2.6 in ACPI Specification.
+    """
+
+    def __init__(self, data):
+        self.name = "PCI Express Device AER Structure"
+        self.data = {
+            "type": self.binary_to_int(data[0:2] + b"\00\00", 0, length=4),
+            "source_id": self.binary_to_int(
+                data[2:4] + b"\00\00", 0, length=4
+            ),
+            "flags": self.binary_to_byte(data, 6),
+            "enabled": self.binary_to_byte(data, 7),
+            "number_of_records_to_preallocate": self.binary_to_int(data, 8),
+            "max_sections_per_record": self.binary_to_int(data, 12),
+            "bus": self.binary_to_int(data, 16),
+            "device": self.binary_to_hex(data, 20, 2),
+            "function": self.binary_to_hex(data, 22, 2),
+            "device_control": self.binary_to_hex(data, 24, 2),
+            "uncorrectable_error_mask": self.binary_to_hex(data, 28, 4),
+            "uncorrectable_error_severity": self.binary_to_hex(data, 32, 4),
+            "correctable_error_mask": self.binary_to_hex(data, 36, 4),
+            "advanced_error_capabilities_and_contorl": self.binary_to_hex(
+                data, 40, 4
+            ),
+            "secondary_uncorrectable_error_mask": self.binary_to_hex(
+                data, 44, 4
+            ),
+            "secondary_uncorrectable_error_severity": self.binary_to_hex(
+                data, 48, 4
+            ),
+            "secondary_advanced_error_capabilities_and_contorl": self.binary_to_hex(
+                data, 52, 4
+            ),
+            "length": 56,
+        }
+
+
+class GenericHardwareErrorSourceStructure(HardwareErrorSourceEntry):
+    """
+    Generic Hardware Error Source Structure
+
+    Section 18.3.2.7 in ACPI Specification.
+    """
+
+    def __init__(self, data):
+        self.name = "Generic Hardware Error Source"
+        self.data = {
+            "type": self.binary_to_int(data[0:2] + b"\00\00", 0, length=4),
+            "source_id": self.binary_to_int(
+                data[2:4] + b"\00\00", 0, length=4
+            ),
+            "related_source_id": self.binary_to_int(data, 4),
+            "flags": self.binary_to_byte(data, 6),
+            "enabled": self.binary_to_byte(data, 7),
+            "number_of_records_to_preallocate": self.binary_to_int(data, 8),
+            "max_sections_per_record": self.binary_to_int(data, 12),
+            "max_raw_data_length": self.binary_to_int(data, 16),
+            "error_status_address": self.binary_to_hex(data, 20, 12),
+            "notification_structure": data[32:60],
+            "error_status_block_length": self.binary_to_hex(data, 60, 4),
+            "length": 64,
+        }
+
+
+class GenericHardwareErrorSourceV2(HardwareErrorSourceEntry):
+    """
+    Generic Hardware Error Source version 2
+
+    Section 18.3.2.8 in ACPI Specification.
+    """
+
+    def __init__(self, data):
+        self.name = "Generic Hardware Error Source version 2"
+        self.data = {
+            "type": self.binary_to_int(data[0:2] + b"\00\00", 0, length=4),
+            "source_id": self.binary_to_int(
+                data[2:4] + b"\00\00", 0, length=4
+            ),
+            "related_source_id": self.binary_to_int(data, 4),
+            "flags": self.binary_to_byte(data, 6),
+            "enabled": self.binary_to_byte(data, 7),
+            "number_of_records_to_preallocate": self.binary_to_int(data, 8),
+            "max_sections_per_record": self.binary_to_int(data, 12),
+            "max_raw_data_length": self.binary_to_int(data, 16),
+            "error_status_address": self.binary_to_hex(data, 20, 12),
+            "notification_structure": data[32:60],
+            "error_status_block_length": self.binary_to_hex(data, 60, 4),
+            "read_ack_register": self.binary_to_hex(data, 64, 12),
+            "read_ack_preserve": self.binary_to_hex(data, 76, 8),
+            "read_ack_write": self.binary_to_hex(data, 84, 8),
+            "length": 92,
+        }
+
+
+HEST_TYPES = {
+    0: IA32ArchitectureMachineCheckException,
+    1: IA32ArchitectureCorrectedMachineCheck,
+    2: "IA-32 Architecture NMI",
+    6: AERRootPort,
+    7: AEREndpoint,
+    8: AERBridge,
+    9: GenericHardwareErrorSourceStructure,
+    10: GenericHardwareErrorSourceV2,
+}
 
 section_types = {
     "9876ccad47b44bdbb65e16f193c4f3db": {
