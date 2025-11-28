@@ -364,7 +364,7 @@ class IA32ArchitectureMachineCheckException(HardwareErrorSourceEntry):
             ),
             "flags": self.binary_to_byte(data, 6),
             "enabled": self.binary_to_byte(data, 7),
-            "number_of_records_to_preallocate": self.binary_to_int(data, 12),
+            "number_of_records_to_preallocate": self.binary_to_int(data, 8),
             "max_sections_per_record": self.binary_to_int(data, 12),
             "global_capability_init_data": self.binary_to_int(
                 data, 16, length=8
