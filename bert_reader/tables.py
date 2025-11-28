@@ -427,7 +427,7 @@ class IA32ArchitectureCorrectedMachineCheck(HardwareErrorSourceEntry):
             ),
             "flags": self.binary_to_byte(data, 6),
             "enabled": self.binary_to_byte(data, 7),
-            "number_of_records_to_preallocate": self.binary_to_int(data, 12),
+            "number_of_records_to_preallocate": self.binary_to_int(data, 8),
             "max_sections_per_record": self.binary_to_int(data, 12),
             "notification_structure": data[16:44],
             "number_of_hardware_banks": self.binary_to_byte(data, 44),
