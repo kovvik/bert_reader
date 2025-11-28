@@ -364,7 +364,7 @@ class IA32ArchitectureMachineCheckException(HardwareErrorSourceEntry):
             ),
             "flags": self.binary_to_byte(data, 6),
             "enabled": self.binary_to_byte(data, 7),
-            "number_of_records_to_preallocate": self.binary_to_int(data, 12),
+            "number_of_records_to_preallocate": self.binary_to_int(data, 8),
             "max_sections_per_record": self.binary_to_int(data, 12),
             "global_capability_init_data": self.binary_to_int(
                 data, 16, length=8
@@ -427,12 +427,33 @@ class IA32ArchitectureCorrectedMachineCheck(HardwareErrorSourceEntry):
             ),
             "flags": self.binary_to_byte(data, 6),
             "enabled": self.binary_to_byte(data, 7),
-            "number_of_records_to_preallocate": self.binary_to_int(data, 12),
+            "number_of_records_to_preallocate": self.binary_to_int(data, 8),
             "max_sections_per_record": self.binary_to_int(data, 12),
             "notification_structure": data[16:44],
             "number_of_hardware_banks": self.binary_to_byte(data, 44),
         }
         self.data["length"] = 48 + self.data["number_of_hardware_banks"] * 28
+
+
+class IA32ArchitectureNMI(HardwareErrorSourceEntry):
+    """
+    IA-32 Architecture Non-Maskable Interrupt
+
+    18.3.2.3 in ACPI Specification.
+    """
+
+    def __init__(self, data):
+        self.name = "IA-32 Architecture Non-Maskable Interrupt"
+        self.data = {
+            "type": self.binary_to_int(data[0:2] + b"\00\00", 0, length=4),
+            "source_id": self.binary_to_int(
+                data[2:4] + b"\00\00", 0, length=4
+            ),
+            "number_of_records_to_preallocate": self.binary_to_int(data, 8),
+            "max_sections_per_record": self.binary_to_int(data, 12),
+            "max_raw_data_length": self.binary_to_int(data, 16),
+            "length": 20,
+        }
 
 
 class AERRootPort(HardwareErrorSourceEntry):
@@ -600,7 +621,7 @@ class GenericHardwareErrorSourceV2(HardwareErrorSourceEntry):
 HEST_TYPES = {
     0: IA32ArchitectureMachineCheckException,
     1: IA32ArchitectureCorrectedMachineCheck,
-    2: "IA-32 Architecture NMI",
+    2: IA32ArchitectureNMI,
     6: AERRootPort,
     7: AEREndpoint,
     8: AERBridge,
